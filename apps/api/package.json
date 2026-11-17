@@ -1,0 +1,30 @@
+{
+  "name": "@stroybazaar/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "build": "tsup",
+    "start": "node --env-file-if-exists=../../.env dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.18.0",
+    "@stroybazaar/db": "workspace:*",
+    "@stroybazaar/shared": "workspace:*",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@stroybazaar/tsconfig": "workspace:*",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.18.0",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

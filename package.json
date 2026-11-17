@@ -1,0 +1,18 @@
+{
+  "name": "stroybazaar",
+  "private": true,
+  "packageManager": "pnpm@10.14.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "db:generate": "pnpm --filter @stroybazaar/db db:generate",
+    "db:migrate": "pnpm --filter @stroybazaar/db db:migrate",
+    "db:studio": "pnpm --filter @stroybazaar/db db:studio"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.8",
+    "typescript": "^5.9.3"
+  }
+}

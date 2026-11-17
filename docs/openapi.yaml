@@ -1,0 +1,853 @@
+openapi: 3.0.3
+info:
+  title: StroyBazaar Marketplace API
+  version: 0.1.0
+  description: |
+    Backend contract for the StroyBazaar construction-materials marketplace
+    (Khujand). Implements the flows in `docs/business-model.md`: retail
+    checkout, wholesale RFQ, supplier verification/ratings, and the
+    in-app receipt confirmation that triggers commission.
+
+    Conventions:
+    - All request/response bodies are `application/json`.
+    - Timestamps are ISO 8601 (`date-time`); dates are `YYYY-MM-DD`.
+    - Money amounts are in TJS (Somoni). The client formats them for display.
+    - `LocalizedText` objects carry `en`, `ru`, `tj`. Supplier-written listing
+      text is stored as-is; only categories, units and attributes are
+      translated by the platform (business model section 7).
+    - Client-supplied prices are never trusted for orders or quotes: the
+      server recomputes unit prices from the current catalog/wholesale tiers.
+  contact:
+    name: StroyBazaar Platform Team
+servers:
+  - url: http://localhost:3000/v1
+    description: Local development
+  - url: https://api.stroybazaar.example/v1
+    description: Production (replace with real domain)
+tags:
+  - name: Auth
+    description: Phone/SMS OTP login (business model section 11)
+  - name: Catalog
+  - name: Suppliers
+  - name: RFQ
+    description: Wholesale request-for-quote flow
+  - name: Orders
+  - name: Reviews
+  - name: Demo
+    description: Helpers that only exist in the mock client; remove in production
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/otp/request:
+    post:
+      tags: [Auth]
+      summary: Request an SMS OTP code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                phone:
+                  type: string
+                  example: '+992925550101'
+                  description: E.164 format.
+      responses:
+        '200':
+          description: Code sent (or throttled) — always the same response to avoid phone enumeration.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent: { type: boolean, example: true }
+                  expiresIn: { type: integer, example: 300, description: Seconds }
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /auth/otp/verify:
+    post:
+      tags: [Auth]
+      summary: Verify OTP and receive a JWT
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, code]
+              properties:
+                phone: { type: string, example: '+992925550101' }
+                code: { type: string, example: '123456' }
+      responses:
+        '200':
+          description: Authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /me:
+    get:
+      tags: [Auth]
+      summary: Current user profile
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /categories:
+    get:
+      tags: [Catalog]
+      summary: List translated product categories
+      security: []
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Category'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /products:
+    get:
+      tags: [Catalog]
+      summary: List products, optionally filtered by category
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CategoryId'
+        - $ref: '#/components/parameters/LanguageHeader'
+        - name: search
+          in: query
+          required: false
+          schema: { type: string }
+          description: Server-side search across all localized names/attributes.
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Product'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /products/{productId}:
+    get:
+      tags: [Catalog]
+      summary: Get one product
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /suppliers:
+    get:
+      tags: [Suppliers]
+      summary: List suppliers (verified first)
+      security: []
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Supplier'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /suppliers/{supplierId}:
+    get:
+      tags: [Suppliers]
+      summary: Get a supplier profile
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SupplierId'
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /suppliers/{supplierId}/reviews:
+    get:
+      tags: [Suppliers]
+      summary: List reviews for a supplier
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SupplierId'
+      responses:
+        '200':
+          description: OK, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Review'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /rfqs:
+    get:
+      tags: [RFQ]
+      summary: List the current buyer's RFQs
+      description: Buyer-only. Suppliers use `GET /rfqs?status=open` from their dashboard (separate scope).
+      responses:
+        '200':
+          description: OK, newest first. Includes each RFQ's quotes.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RFQ'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [RFQ]
+      summary: Post a wholesale materials request
+      description: |
+        The contractor posts a materials list. Suppliers reply with quotes.
+        This is the key differentiator in business model section 2.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRFQRequest'
+      responses:
+        '201':
+          description: Created, status `open`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RFQ'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /rfqs/{rfqId}:
+    get:
+      tags: [RFQ]
+      summary: Get an RFQ with all supplier quotes
+      parameters:
+        - $ref: '#/components/parameters/RfqId'
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RFQ'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /rfqs/{rfqId}/quotes:
+    get:
+      tags: [RFQ]
+      summary: List quotes for an RFQ
+      parameters:
+        - $ref: '#/components/parameters/RfqId'
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Quote'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [RFQ]
+      summary: Submit a quote (supplier role)
+      description: Called by the supplier dashboard, not by the buyer app.
+      parameters:
+        - $ref: '#/components/parameters/RfqId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateQuoteRequest'
+      responses:
+        '201':
+          description: Quote created; RFQ status becomes `quoted`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quote'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /rfqs/{rfqId}/award:
+    post:
+      tags: [RFQ]
+      summary: Accept a quote
+      description: Buyer-only. Sets status to `awarded` and records `awardedQuoteId`.
+      parameters:
+        - $ref: '#/components/parameters/RfqId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AwardQuoteRequest'
+      responses:
+        '200':
+          description: Awarded RFQ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RFQ'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /orders:
+    get:
+      tags: [Orders]
+      summary: List the current buyer's orders
+      responses:
+        '200':
+          description: OK, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Orders]
+      summary: Place a retail order
+      description: |
+        COD / bank transfer at launch (business model section 5). The server
+        MUST recompute `unitPrice` and `total` from current catalog prices and
+        wholesale tiers; client-sent prices are ignored. A new order starts at
+        `placed`. Commission is accrued only on receipt confirmation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /orders/{orderId}:
+    get:
+      tags: [Orders]
+      summary: Get one order
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Orders]
+      summary: Update order status (supplier/admin only)
+      description: |
+        Replaces the mock client's `advanceOrderStatus` helper. Buyers cannot
+        call this; they use `/orders/{orderId}/confirm-receipt` instead.
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOrderStatusRequest'
+      responses:
+        '200':
+          description: Updated order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /orders/{orderId}/confirm-receipt:
+    post:
+      tags: [Orders]
+      summary: Buyer confirms receipt
+      description: |
+        The core commission-leakage control (business model section 4).
+        Sets status to `confirmed_receipt`, marks the order commissionable,
+        and triggers the review request. Idempotent.
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Confirmed order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /reviews:
+    post:
+      tags: [Reviews]
+      summary: Submit a supplier review
+      description: Typically called right after receipt confirmation. One review per order.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitReviewRequest'
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Review'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /rfqs/{rfqId}/quotes/simulate:
+    post:
+      tags: [Demo]
+      summary: Generate demo supplier quotes
+      deprecated: true
+      description: |
+        MOCK ONLY — mirrors `simulateSupplierQuotes` in `src/api/client.ts`.
+        Remove before production; real quotes arrive via
+        `POST /rfqs/{rfqId}/quotes` from supplier accounts.
+      parameters:
+        - $ref: '#/components/parameters/RfqId'
+      responses:
+        '200':
+          description: RFQ with generated quotes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RFQ'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema: { type: string }
+      example: p-1
+    SupplierId:
+      name: supplierId
+      in: path
+      required: true
+      schema: { type: string }
+      example: sup-1
+    RfqId:
+      name: rfqId
+      in: path
+      required: true
+      schema: { type: string }
+      example: rfq-1
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema: { type: string }
+      example: A7X2
+    CategoryId:
+      name: categoryId
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [cement, rebar, bricks, tiles, paint, plumbing, electrical, timber, tools]
+    LanguageHeader:
+      name: Accept-Language
+      in: header
+      required: false
+      schema: { type: string, enum: [en, ru, tj], default: en }
+      description: Preferred language for platform-provided strings.
+
+  responses:
+    BadRequest:
+      description: Malformed request.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid token.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated but not allowed (wrong role or not the owner).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Invalid state transition or duplicate resource.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: Business validation failed.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: Rate limited.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ServerError:
+      description: Unexpected error.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: ORDER_ALREADY_CONFIRMED
+        message:
+          type: string
+          example: This order has already been confirmed.
+        details:
+          type: object
+          additionalProperties: true
+
+    Language:
+      type: string
+      enum: [en, ru, tj]
+
+    LocalizedText:
+      type: object
+      required: [en, ru, tj]
+      properties:
+        en: { type: string }
+        ru: { type: string }
+        tj: { type: string }
+
+    Category:
+      type: object
+      required: [id, name, icon]
+      properties:
+        id: { type: string, example: cement }
+        name: { $ref: '#/components/schemas/LocalizedText' }
+        icon: { type: string, example: layers }
+
+    Supplier:
+      type: object
+      required: [id, name, verified, rating, reviewCount, location, phones, languages, joinedAt]
+      properties:
+        id: { type: string, example: sup-1 }
+        name: { type: string, example: Ghafurov Cement Yard }
+        verified: { type: boolean, example: true }
+        rating: { type: number, format: float, minimum: 0, maximum: 5, example: 4.8 }
+        reviewCount: { type: integer, example: 126 }
+        location: { $ref: '#/components/schemas/LocalizedText' }
+        phones:
+          type: array
+          items: { type: string }
+          example: ['+992 92 555 0101']
+        languages:
+          type: array
+          items: { $ref: '#/components/schemas/Language' }
+        joinedAt: { type: string, format: date, example: '2024-03-12' }
+
+    WholesaleTier:
+      type: object
+      required: [minQty, pricePerUnit]
+      properties:
+        minQty: { type: integer, example: 100, description: Minimum quantity to unlock this tier. }
+        pricePerUnit: { type: number, format: float, example: 72 }
+
+    Product:
+      type: object
+      required: [id, name, categoryId, supplierId, price, unit, stock, attributes, wholesaleTiers]
+      properties:
+        id: { type: string, example: p-1 }
+        name: { $ref: '#/components/schemas/LocalizedText' }
+        categoryId: { type: string, example: cement }
+        supplierId: { type: string, example: sup-1 }
+        price: { type: number, format: float, example: 78, description: Retail price per unit. }
+        unit: { $ref: '#/components/schemas/LocalizedText' }
+        image:
+          type: string
+          format: uri
+          nullable: true
+          description: May be null/empty in the MVP (placeholder icon is rendered client-side).
+        stock: { type: integer, example: 2400 }
+        attributes: { $ref: '#/components/schemas/LocalizedText' }
+        wholesaleTiers:
+          type: array
+          items: { $ref: '#/components/schemas/WholesaleTier' }
+
+    RFQItem:
+      type: object
+      required: [productId, productName, unit, quantity]
+      properties:
+        productId: { type: string, example: p-1 }
+        productName: { $ref: '#/components/schemas/LocalizedText' }
+        unit: { $ref: '#/components/schemas/LocalizedText' }
+        quantity: { type: number, format: float, example: 500 }
+
+    Quote:
+      type: object
+      required: [id, supplierId, total, deliveryDays, note, createdAt]
+      properties:
+        id: { type: string, example: q-1 }
+        supplierId: { type: string, example: sup-1 }
+        total: { type: number, format: float, example: 34000 }
+        deliveryDays: { type: integer, example: 2 }
+        note: { $ref: '#/components/schemas/LocalizedText' }
+        createdAt: { type: string, format: date-time }
+
+    RFQStatus:
+      type: string
+      enum: [open, quoted, awarded]
+
+    RFQ:
+      type: object
+      required: [id, items, deliveryLocation, neededBy, status, quotes, createdAt]
+      properties:
+        id: { type: string, example: rfq-1 }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RFQItem' }
+        deliveryLocation: { type: string, example: 'Site X, Ghafurov district' }
+        neededBy: { type: string, format: date, example: '2025-11-25' }
+        status: { $ref: '#/components/schemas/RFQStatus' }
+        quotes:
+          type: array
+          items: { $ref: '#/components/schemas/Quote' }
+        createdAt: { type: string, format: date-time }
+        awardedQuoteId: { type: string, nullable: true }
+
+    CreateRFQRequest:
+      type: object
+      required: [items, deliveryLocation, neededBy]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [productId, quantity]
+            properties:
+              productId: { type: string, example: p-1 }
+              quantity: { type: number, format: float, minimum: 1, example: 500 }
+        deliveryLocation: { type: string, minLength: 1, example: 'Site X, Ghafurov district' }
+        neededBy: { type: string, format: date, example: '2025-11-25' }
+
+    CreateQuoteRequest:
+      type: object
+      required: [total, deliveryDays, note]
+      properties:
+        total: { type: number, format: float, example: 34000 }
+        deliveryDays: { type: integer, minimum: 0, example: 2 }
+        note: { $ref: '#/components/schemas/LocalizedText' }
+
+    AwardQuoteRequest:
+      type: object
+      required: [quoteId]
+      properties:
+        quoteId: { type: string, example: q-1 }
+
+    OrderLine:
+      type: object
+      required: [productId, productName, unit, quantity, unitPrice]
+      properties:
+        productId: { type: string }
+        productName: { $ref: '#/components/schemas/LocalizedText' }
+        unit: { $ref: '#/components/schemas/LocalizedText' }
+        quantity: { type: number, format: float }
+        unitPrice: { type: number, format: float, description: Server-calculated at order creation. }
+
+    PaymentMethod:
+      type: string
+      enum: [cod, bank_transfer]
+
+    OrderStatus:
+      type: string
+      enum: [placed, confirmed, out_for_delivery, delivered, confirmed_receipt]
+      description: |
+        Lifecycle: placed -> confirmed -> out_for_delivery -> delivered ->
+        confirmed_receipt. Only the last transition is buyer-initiated.
+
+    Order:
+      type: object
+      required: [id, supplierId, lines, total, paymentMethod, status, deliveryAddress, createdAt, hasReview]
+      properties:
+        id: { type: string, example: A7X2 }
+        supplierId: { type: string, example: sup-3 }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/OrderLine' }
+        total: { type: number, format: float, example: 750 }
+        paymentMethod: { $ref: '#/components/schemas/PaymentMethod' }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        deliveryAddress: { type: string, example: '12 Lenin Street, Khujand' }
+        createdAt: { type: string, format: date-time }
+        hasReview: { type: boolean, example: false }
+
+    CreateOrderRequest:
+      type: object
+      required: [lines, paymentMethod, deliveryAddress]
+      properties:
+        lines:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [productId, quantity]
+            properties:
+              productId: { type: string, example: p-7 }
+              quantity: { type: number, format: float, minimum: 1, example: 60 }
+        paymentMethod: { $ref: '#/components/schemas/PaymentMethod' }
+        deliveryAddress: { type: string, minLength: 1, example: '12 Lenin Street, Khujand' }
+
+    UpdateOrderStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+
+    Review:
+      type: object
+      required: [id, supplierId, author, rating, comment, createdAt]
+      properties:
+        id: { type: string, example: rev-1 }
+        supplierId: { type: string, example: sup-1 }
+        author: { type: string, example: A. Rahimov }
+        rating: { type: integer, minimum: 1, maximum: 5, example: 5 }
+        comment: { type: string, example: 'Delivered on time, good price.' }
+        createdAt: { type: string, format: date-time }
+
+    SubmitReviewRequest:
+      type: object
+      required: [supplierId, rating, comment]
+      properties:
+        supplierId: { type: string }
+        orderId:
+          type: string
+          nullable: true
+          description: If provided, links the review to an order and enforces one review per order.
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: string, minLength: 1 }
+
+    User:
+      type: object
+      required: [id, phone, role, language]
+      properties:
+        id: { type: string }
+        phone: { type: string, example: '+992925550101' }
+        role: { type: string, enum: [buyer, supplier, admin] }
+        name: { type: string, nullable: true }
+        language: { $ref: '#/components/schemas/Language' }
+
+    AuthToken:
+      type: object
+      required: [token, tokenType, expiresAt, user]
+      properties:
+        token: { type: string, description: JWT }
+        tokenType: { type: string, enum: [Bearer], example: Bearer }
+        expiresAt: { type: string, format: date-time }
+        user: { $ref: '#/components/schemas/User' }
