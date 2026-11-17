@@ -1,7 +1,10 @@
 # StroyBazaar
 
-Construction materials marketplace for Khujand. See [docs/business-model.md](docs/business-model.md)
-and [docs/api-integration.md](docs/api-integration.md).
+Construction materials marketplace for Khujand.
+
+- [Local development](docs/development.md): setup, running, database, testing, troubleshooting
+- [API integration](docs/api-integration.md): connecting the mobile app
+- [Business model](docs/business-model.md)
 
 ## Structure
 

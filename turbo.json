@@ -35,7 +35,6 @@
         "^db:generate"
       ]
     },
-    "lint": {},
     "test": {
       "dependsOn": [
         "^db:generate"
