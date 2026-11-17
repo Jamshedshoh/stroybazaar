@@ -1,9 +1,18 @@
 # API integration guide
 
 This document connects the React Native app to a real backend. The canonical
-contract is **[`openapi.yaml`](./openapi.yaml)** (OpenAPI 3.0.3). The app
-currently talks to an in-memory mock in `src/api/client.ts`; replacing that one
-file is enough to switch to a live API.
+contract is the OpenAPI 3.0.3 document that `apps/api` generates from its own
+route definitions, so it always matches what the server validates and returns:
+
+- **http://localhost:4000/openapi.json** (or `/openapi.yaml`): the document
+- **http://localhost:4000/docs**: Swagger UI, with "Try it out"
+
+The app currently talks to an in-memory mock in `src/api/client.ts`; replacing
+that one file is enough to switch to a live API.
+
+The supplier dashboard and admin console use the same tokens. Platform
+management lives in `apps/admin-api` (admin role only), documented at
+http://localhost:4001/openapi.json and http://localhost:4001/docs.
 
 ---
 
@@ -12,14 +21,14 @@ file is enough to switch to a live API.
 Create a `.env` file in the project root:
 
 ```dotenv
-EXPO_PUBLIC_API_URL=http://localhost:3000/v1
+EXPO_PUBLIC_API_URL=http://localhost:4000/v1
 ```
 
 Expo exposes `EXPO_PUBLIC_*` variables to the client bundle. Restart Metro
 (`npm start -- --clear`) after changing it.
 
 Use a real HTTPS URL in production. For a physical device, `localhost` points
-at the phone — use your machine's LAN IP (e.g. `http://192.168.1.10:3000/v1`)
+at the phone — use your machine's LAN IP (e.g. `http://192.168.1.10:4000/v1`)
 or a tunnel.
 
 ---
@@ -75,8 +84,12 @@ Public endpoints (catalog, suppliers, reviews) need no token. Everything under
 | `submitReview(input)` | `POST /reviews` | buyer | One review per order |
 
 New endpoints the mock has no equivalent for: `POST /auth/otp/request`,
-`POST /auth/otp/verify`, `GET /me`, `GET /rfqs/{rfqId}/quotes`,
-`POST /rfqs/{rfqId}/quotes` (supplier role).
+`POST /auth/otp/verify`, `GET /me`, `PATCH /me` (name, language),
+`GET /rfqs/{rfqId}/quotes`, and for the supplier dashboard
+`POST /rfqs/{rfqId}/quotes`, `POST /products`, `PATCH /products/{productId}`.
+`GET /rfqs` and `GET /orders` accept an optional `status` filter and return
+what the caller's role may see (buyer: own; supplier: open RFQs / own orders;
+admin: all).
 
 ---
 
@@ -87,7 +100,7 @@ Create `src/api/http.ts`:
 ```ts
 import { useStore } from '@/store/useStore';
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000/v1';
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000/v1';
 
 export class ApiClientError extends Error {
   constructor(
@@ -213,63 +226,66 @@ phase alongside the wallet payments work.
 
 ---
 
-## 7. Try the API without a backend yet
+## 7. Try the API
 
-Import `docs/openapi.yaml` into [editor.swagger.io](https://editor.swagger.io)
-or run a local preview:
+Start the stack (`podman compose up -d`, `pnpm db:seed`, `pnpm dev`), then open
+http://localhost:4000/docs. In development the OTP code is printed in the
+`api` console instead of being sent by SMS.
+
+The document is generated from the route definitions in `apps/api/src/routes`.
+To change the contract, change the route or its Zod schema in
+`apps/api/src/schemas.ts`. Validate it with:
 
 ```bash
-npx @redocly/cli preview-docs docs/openapi.yaml
+pnpm validate:api
 ```
 
-Structural validation (YAML parse + all local `$ref`s resolve):
+For client code generation (e.g. `openapi-typescript`), save a snapshot:
 
 ```bash
-npm run validate:api
+pnpm --filter @stroybazaar/api openapi:export openapi.yaml
 ```
 
-Example requests once a server implements the spec:
+Example requests:
 
 ```bash
 # Request an OTP
-curl -X POST http://localhost:3000/v1/auth/otp/request \
+curl -X POST http://localhost:4000/v1/auth/otp/request \
   -H 'Content-Type: application/json' \
   -d '{"phone":"+992925550101"}'
 
 # List products (Russian labels)
-curl http://localhost:3000/v1/products?categoryId=cement \
+curl http://localhost:4000/v1/products?categoryId=cement \
   -H 'Accept-Language: ru'
 
 # Confirm receipt (requires token)
-curl -X POST http://localhost:3000/v1/orders/A7X2/confirm-receipt \
+curl -X POST http://localhost:4000/v1/orders/A7X2/confirm-receipt \
   -H 'Authorization: Bearer <JWT>'
 ```
 
 ---
 
-## 8. Suggested backend shape
+## 8. Backend implementation notes
 
-Framework-agnostic tables/collections (Node + Express + PostgreSQL, or
-Supabase, per model §11):
+The backend is `apps/api` (Express 5 + Prisma + PostgreSQL). The data model is
+in `packages/db/prisma/schema.prisma`. Decisions behind the rules in section 5:
 
-```
-users(id, phone, role, language, created_at)
-suppliers(id, name, verified, rating, review_count, location_json, phones, languages, joined_at)
-categories(id, name_json, icon)
-products(id, category_id, supplier_id, name_json, price, unit_json, image_url, stock, attributes_json)
-wholesale_tiers(id, product_id, min_qty, price_per_unit)
-rfqs(id, buyer_id, delivery_location, needed_by, status, created_at, awarded_quote_id)
-rfq_items(id, rfq_id, product_id, quantity)
-quotes(id, rfq_id, supplier_id, total, delivery_days, note_json, created_at)
-orders(id, buyer_id, supplier_id, total, payment_method, status, delivery_address, created_at, has_review)
-order_lines(id, order_id, product_id, quantity, unit_price)
-reviews(id, supplier_id, order_id, author, rating, comment, created_at)
-commissions(id, order_id, amount, created_at)
-```
-
-Useful indexes: `products(category_id)`, `rfq_items(rfq_id)`,
-`quotes(rfq_id)`, `rfqs(buyer_id, created_at DESC)`,
-`orders(buyer_id, created_at DESC)`.
-
-The supplier dashboard and admin console are a separate Next.js app (model §11)
-and consume the same API with the `supplier`/`admin` roles.
+- **Prices:** order lines use the best wholesale tier the quantity unlocks.
+  Quote totals are the supplier's own offer, since negotiating that price is
+  the point of an RFQ.
+- **One supplier per order:** `POST /orders` with lines from several
+  suppliers returns `422 MULTIPLE_SUPPLIERS`; the app should split the cart.
+- **Stock** is checked (`409 INSUFFICIENT_STOCK`) but not decremented.
+  Suppliers own their stock figures (business model section 1).
+- **Receipt confirmation** is allowed once the supplier has accepted the order
+  (`confirmed`, `out_for_delivery` or `delivered`), so a supplier cannot block
+  commission by never marking an order delivered. Commission rate is
+  `COMMISSION_RATE` (default `0.02`).
+- **Supplier accounts:** users sign up as buyers; an admin links them to a
+  supplier with `PATCH /v1/users/{userId}` on `admin-api`. Only `verified`
+  suppliers can quote. Suspended suppliers vanish from the catalog.
+- **OTP:** 6-digit codes, 5-minute expiry, 5 attempts, at most 3 SMS per phone
+  per 10 minutes (silently), plus a per-IP limit (`OTP_RATE_LIMIT`, default 10
+  per 15 minutes, `429`). Plug a real SMS provider into `apps/api/src/sms.ts`.
+- **Demo endpoint:** `POST /rfqs/{rfqId}/quotes/simulate` exists only when
+  `DEMO_ENDPOINTS=true` or `NODE_ENV` is not `production`.

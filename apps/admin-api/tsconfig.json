@@ -1,4 +1,7 @@
 {
   "extends": "@stroybazaar/tsconfig/node.json",
-  "include": ["src"]
+  "compilerOptions": {
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src", "test", "vitest.config.ts"]
 }
