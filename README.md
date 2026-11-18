@@ -12,11 +12,13 @@ Construction materials marketplace for Khujand.
 |---|---|---|
 | `apps/api` | Public API for the mobile app and supplier dashboard | 4000 |
 | `apps/admin-api` | Platform management API (admin role) | 4001 |
-| `apps/web-app` | Next.js customer website | 3000 |
-| `apps/admin-app` | Next.js admin dashboard | 3001 |
+| `apps/web-app` | Next.js buyer website: catalog, cart and checkout, quote requests, orders and reviews | 3000 |
+| `apps/admin-app` | Next.js console: admin pages (suppliers, categories, users, orders, commissions) and the supplier dashboard (products, quotes, orders) | 3001 |
 | `packages/db` | Prisma schema, migrations, seed (PostgreSQL) | |
 | `packages/server` | Shared Express pieces: auth, errors, OpenAPI route helper | |
-| `packages/shared` | Code shared with the web apps (locales) | |
+| `packages/shared` | Locales, i18n helpers, price estimates | |
+| `packages/ui` | Shared React UI components and Tailwind theme | |
+| `packages/api-client` | Typed API clients generated from the OpenAPI documents (`pnpm api:types`) | |
 | `packages/tsconfig` | Shared TypeScript configs | |
 
 ## API docs

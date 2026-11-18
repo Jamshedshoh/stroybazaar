@@ -133,6 +133,15 @@ describe("catalog", () => {
       .send({ stock: 3, wholesaleTiers: [] })
       .expect(200);
     expect(updated.body).toMatchObject({ stock: 3, wholesaleTiers: [] });
+
+    await http().patch(`/v1/products/${created.body.id}`).set(bearer(world.tokens.supplierB)).send({ active: false }).expect(200);
+    const mine = await http().get("/v1/me/products").set(bearer(world.tokens.supplierB)).expect(200);
+    expect(mine.body.map((p: { id: string; active: boolean }) => [p.id, p.active])).toEqual([
+      [created.body.id, false],
+      [world.rebar.id, true],
+    ]);
+    const catalog = await http().get("/v1/products?categoryId=rebar").expect(200);
+    expect(catalog.body.map((p: { id: string }) => p.id)).toEqual([world.rebar.id]);
   });
 
   it("rejects unknown categories", async () => {

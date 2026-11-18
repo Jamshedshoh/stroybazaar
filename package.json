@@ -12,7 +12,8 @@
     "test": "turbo run test --concurrency=1",
     "validate:api": "pnpm test --filter=@stroybazaar/api -- openapi",
     "db:seed": "pnpm --filter @stroybazaar/db db:seed",
-    "db:reset": "pnpm --filter @stroybazaar/db db:reset"
+    "db:reset": "pnpm --filter @stroybazaar/db db:reset",
+    "api:types": "pnpm --filter @stroybazaar/api-client generate"
   },
   "devDependencies": {
     "turbo": "^2.5.8",
