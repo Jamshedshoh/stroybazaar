@@ -65,6 +65,10 @@ export const Product = z
   })
   .openapi("Product");
 
+export const SupplierProduct = Product.extend({
+  active: z.boolean().openapi({ description: "Hidden from the catalog when false." }),
+}).openapi("SupplierProduct");
+
 export const ProductInput = z
   .object({
     categoryId: z.string().min(1).openapi({ example: "cement" }),

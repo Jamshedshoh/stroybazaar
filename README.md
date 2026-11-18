@@ -17,7 +17,9 @@ Construction materials marketplace for Khujand.
 | `apps/mobile-app` | Expo / React Native app (Expo Go, Android, iOS, web) | 8081 (Metro) |
 | `packages/db` | Prisma schema, migrations, seed (PostgreSQL) | |
 | `packages/server` | Shared Express pieces: auth, errors, OpenAPI route helper | |
-| `packages/shared` | Code shared with the web apps (locales) | |
+| `packages/shared` | Locales, i18n helpers, price estimates | |
+| `packages/ui` | Shared React UI components and Tailwind theme | |
+| `packages/api-client` | Typed API clients generated from the OpenAPI documents (`pnpm api:types`) | |
 | `packages/tsconfig` | Shared TypeScript configs | |
 
 ## API docs

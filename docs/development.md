@@ -49,6 +49,11 @@ All apps read the root `.env`.
 | `ADMIN_PHONE` | seed | none | `pnpm db:seed` makes this phone number an admin |
 | `TEST_DATABASE_URL` | tests | `DATABASE_URL` with `schema=test` | Database used by `pnpm test` |
 | `EXPO_PUBLIC_API_URL` | mobile-app | none | API base URL for the Expo app (also reads `apps/mobile-app/.env`) |
+| `API_URL` | web-app, admin-app | `http://localhost:4000/v1` | api base URL, called from the Next.js server only |
+| `ADMIN_API_URL` | admin-app | `http://localhost:4001/v1` | admin-api base URL, called from the Next.js server only |
+
+The two web apps read their own `apps/<app>/.env.local` if present (see each app's `.env.example`).
+The defaults work for local development.
 
 Generate a secret with:
 
@@ -78,6 +83,14 @@ There is no SMS provider yet. The api prints login codes to its console instead:
 [sms] to +992900000000: StroyBazaar code: 896514
 ```
 
+In the apps, enter a phone number on the login page and type the code from the api console:
+
+- **web-app** (http://localhost:3000/login): any number. Buyers browse, order and post quote requests.
+- **admin-app** (http://localhost:3001/login): admins land on `/admin`, supplier staff on
+  `/supplier`, and buyers see a "no access" page.
+
+To call the APIs directly instead:
+
 1. Open http://localhost:4000/docs.
 2. Call `POST /auth/otp/request` with a phone number in E.164 format, e.g. `+992925550101`.
 3. Copy the code from the api console and call `POST /auth/otp/verify`.
@@ -88,11 +101,12 @@ The first login with a new number creates a **buyer**. For other roles:
 - **Admin:** log in with the `ADMIN_PHONE` number from your `.env` (created by the seed).
   The same token works on admin-api (http://localhost:4001/docs).
 - **Supplier staff:** log in once as a buyer, then as an admin call
-  `PATCH /v1/users/{userId}` on admin-api with `{ "role": "supplier", "supplierId": "..." }`.
-  Only suppliers with status `verified` can submit quotes.
+  `PATCH /v1/users/{userId}` on admin-api with `{ "role": "supplier", "supplierId": "..." }`,
+  or use **Users** in admin-app. Only suppliers with status `verified` can submit quotes.
 
-Each phone number gets at most 3 codes per 10 minutes. If you hit that limit, wait or use
-another number.
+Each phone number gets at most 3 codes per 10 minutes, and each IP address at most
+`OTP_RATE_LIMIT` requests per 15 minutes. Both counters are kept in memory, so restarting the
+api resets them.
 
 ## 6. Database workflow
 
@@ -162,7 +176,33 @@ pnpm --filter @stroybazaar/api openapi:export openapi.yaml
 
 The mobile app integration is described in [api-integration.md](./api-integration.md).
 
-## 8. Tests and checks
+## 8. Working on the web apps
+
+Both are Next.js App Router apps that never call the APIs from the browser. Server components
+and server actions call them with the typed client from `packages/api-client`, and the login
+token lives in an httpOnly cookie (`sb_session` for web-app, `sb_console_session` for admin-app;
+the names differ because cookies on localhost are shared across ports).
+
+| Path | Contents |
+|---|---|
+| `apps/*/src/app/` | Routes. admin-app has `/admin/*` (admin console) and `/supplier/*` (supplier dashboard), each guarded by its layout |
+| `apps/*/src/lib/actions.ts` | Server actions (login, mutations) |
+| `apps/*/src/lib/api.ts` | API clients for the current user, `getViewer()`, role guards |
+| `apps/*/src/lib/dictionaries.ts` | UI text in Tajik, Russian and English. TypeScript flags missing keys |
+| `packages/ui` | Shared buttons, inputs, cards, alerts and the Tailwind theme (`@stroybazaar/ui/theme.css`) |
+| `packages/api-client` | `createApiClient`, `createAdminClient`, `unwrap()` and the generated types |
+
+The client types are generated from the live OpenAPI documents. After changing an API's
+request or response shapes, regenerate them and fix any type errors:
+
+```sh
+pnpm api:types
+pnpm typecheck
+```
+
+The cart is kept in the browser (`localStorage`); checkout places one order per supplier.
+
+## 9. Tests and checks
 
 ```sh
 pnpm test            # integration tests for api and admin-api
@@ -188,7 +228,14 @@ pnpm --filter @stroybazaar/api exec vitest run test/rfq-orders.test.ts
 pnpm --filter @stroybazaar/api exec vitest run -t "accrues commission"
 ```
 
-## 9. Troubleshooting
+## 10. Troubleshooting
+
+**`EADDRINUSE` on port 3000 or 3001.** An earlier `pnpm dev` left a Next.js server running.
+Stop it (Task Manager, or `Get-Process node | Stop-Process` in PowerShell) and start again.
+
+**A web app shows `Can't resolve '@stroybazaar/...'` after adding a package.** Run
+`pnpm install`, stop `pnpm dev`, delete `apps/<app>/.next/dev`, and start again. The Next.js dev
+cache can keep the old resolution.
 
 **`netavark ... nftables error` when starting Postgres.** Podman's bridge networking doesn't
 work on some WSL kernels. `compose.yaml` uses `network_mode: pasta` to avoid it. Keep that line.
@@ -210,3 +257,13 @@ attempts. Request a new code.
 
 **Endpoints fail after pulling new code.** Run `pnpm install` and `pnpm db:migrate`, then
 restart `pnpm dev`.
+
+To try it yourself in Swagger UI:
+1. Call POST /auth/otp/request with +992900000000 (the admin) or any other number (which creates a buyer).
+2. Copy the 6-digit code from the api console output.
+3. Call POST /auth/otp/verify and paste the returned token into Authorize.
+
+The same token works on admin-api if the number is an admin.
+
+I also added a random JWT_SECRET, COMMISSION_RATE and ADMIN_PHONE to your .env, since it predated those settings.
+Tell me when you want the servers stopped.
