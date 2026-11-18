@@ -11,6 +11,7 @@ const listedProduct = {
 
 const ProductsQuery = z.object({
   categoryId: z.string().optional().openapi({ example: "cement" }),
+  supplierId: z.string().optional().openapi({ example: "sup-1" }),
   search: z
     .string()
     .trim()
@@ -69,7 +70,7 @@ export function registerCatalogRoutes(api: ApiRouter) {
     handler: async ({ query }) => {
       const ids = query.search ? await searchProductIds(query.search) : undefined;
       const products = await prisma.product.findMany({
-        where: { ...listedProduct, categoryId: query.categoryId, id: ids && { in: ids } },
+        where: { ...listedProduct, categoryId: query.categoryId, supplierId: query.supplierId, id: ids && { in: ids } },
         include: productInclude,
         orderBy: { createdAt: "desc" },
       });
@@ -93,6 +94,25 @@ export function registerCatalogRoutes(api: ApiRouter) {
       });
       if (!product) throw notFound("Product");
       return serializeProduct(product);
+    },
+  });
+
+  api.route({
+    method: "get",
+    path: "/me/products",
+    tags: ["Catalog"],
+    summary: "List the current supplier's products (supplier dashboard)",
+    description: "Includes hidden products, unlike `GET /products`.",
+    access: ["supplier"],
+    response: { status: 200, description: "OK, newest first.", schema: z.array(S.SupplierProduct) },
+    handler: async ({ user }) => {
+      if (!user.supplierId) return [];
+      const products = await prisma.product.findMany({
+        where: { supplierId: user.supplierId },
+        include: productInclude,
+        orderBy: { createdAt: "desc" },
+      });
+      return products.map((product) => ({ ...serializeProduct(product), active: product.active }));
     },
   });
 

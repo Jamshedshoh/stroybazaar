@@ -13,7 +13,11 @@
     "@stroybazaar/shared": "workspace:*",
     "next": "^16.0.3",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "@stroybazaar/api-client": "workspace:*",
+    "lucide-react": "^1.74.0",
+    "server-only": "^0.0.1",
+    "@stroybazaar/ui": "workspace:*"
   },
   "devDependencies": {
     "@stroybazaar/tsconfig": "workspace:*",
