@@ -12,8 +12,9 @@ Construction materials marketplace for Khujand.
 |---|---|---|
 | `apps/api` | Public API for the mobile app and supplier dashboard | 4000 |
 | `apps/admin-api` | Platform management API (admin role) | 4001 |
-| `apps/web-app` | Next.js buyer website: catalog, cart and checkout, quote requests, orders and reviews | 3000 |
-| `apps/admin-app` | Next.js console: admin pages (suppliers, categories, users, orders, commissions) and the supplier dashboard (products, quotes, orders) | 3001 |
+| `apps/web-app` | Next.js customer website | 3000 |
+| `apps/admin-app` | Next.js admin dashboard | 3001 |
+| `apps/mobile-app` | Expo / React Native app (Expo Go, Android, iOS, web) | 8081 (Metro) |
 | `packages/db` | Prisma schema, migrations, seed (PostgreSQL) | |
 | `packages/server` | Shared Express pieces: auth, errors, OpenAPI route helper | |
 | `packages/shared` | Locales, i18n helpers, price estimates | |
@@ -49,5 +50,9 @@ Run one app: `pnpm dev --filter=@stroybazaar/api`.
 ```sh
 pnpm test                   # api + admin-api integration tests
 ```
+
+`pnpm dev`, `pnpm build` and `pnpm typecheck` are Turbo tasks and include every app,
+including the Expo mobile app. Use `pnpm dev --filter=@stroybazaar/mobile-app` to run
+Metro on its own.
 
 Tests use a separate `test` schema in the same database (override with `TEST_DATABASE_URL`).

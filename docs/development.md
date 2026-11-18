@@ -20,7 +20,7 @@ cp .env.example .env          # then edit .env, see section 3
 podman compose up -d          # Postgres 17 on localhost:5433
 pnpm db:migrate               # apply migrations
 pnpm db:seed                  # categories, demo suppliers and products, admin user
-pnpm dev                      # start all four apps
+pnpm dev                      # start all five apps
 ```
 
 Check that everything is up:
@@ -31,6 +31,7 @@ Check that everything is up:
 | admin-api | http://localhost:4001/health, docs at http://localhost:4001/docs |
 | web-app | http://localhost:3000 |
 | admin-app | http://localhost:3001 |
+| mobile-app | Expo/Metro at http://localhost:8081 (Expo Go on a device uses 19000) |
 
 ## 3. Environment variables
 
@@ -47,6 +48,7 @@ All apps read the root `.env`.
 | `ADMIN_APP_ORIGIN` | admin-api | `http://localhost:3001` | Allowed CORS origin |
 | `ADMIN_PHONE` | seed | none | `pnpm db:seed` makes this phone number an admin |
 | `TEST_DATABASE_URL` | tests | `DATABASE_URL` with `schema=test` | Database used by `pnpm test` |
+| `EXPO_PUBLIC_API_URL` | mobile-app | none | API base URL for the Expo app (also reads `apps/mobile-app/.env`) |
 | `API_URL` | web-app, admin-app | `http://localhost:4000/v1` | api base URL, called from the Next.js server only |
 | `ADMIN_API_URL` | admin-app | `http://localhost:4001/v1` | admin-api base URL, called from the Next.js server only |
 
@@ -65,9 +67,11 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 pnpm dev                                    # everything
 pnpm dev --filter=@stroybazaar/api          # one app
 pnpm dev --filter=@stroybazaar/api --filter=@stroybazaar/admin-api   # both APIs
+pnpm dev --filter=@stroybazaar/mobile-app  # Expo/Metro for the mobile app
 ```
 
-The APIs restart on save (`tsx watch`) and the Next.js apps hot-reload. Stop with `Ctrl+C`.
+The APIs restart on save (`tsx watch`), the Next.js apps hot-reload, and Metro
+serves the Expo app. Stop with `Ctrl+C`.
 Postgres keeps running until you stop it with `podman compose down`. Your data is kept in the
 `pgdata` volume. `podman compose down -v` deletes it.
 
@@ -203,9 +207,14 @@ The cart is kept in the browser (`localStorage`); checkout places one order per 
 ```sh
 pnpm test            # integration tests for api and admin-api
 pnpm validate:api    # OpenAPI document tests only
-pnpm typecheck       # TypeScript across the monorepo
-pnpm build           # production builds
+pnpm typecheck       # TypeScript across the monorepo (including the mobile app)
+pnpm build           # production builds (Expo export writes to apps/mobile-app/dist)
 ```
+
+These are Turbo tasks. To run one just for the mobile app, add
+`--filter=@stroybazaar/mobile-app`. Expo's `EXPO_PUBLIC_*` variables (e.g.
+`EXPO_PUBLIC_API_URL`) are declared in `turbo.json` so changing them invalidates
+the build cache.
 
 The tests run against your local Postgres in a separate `test` schema, so they never touch your
 dev data. They apply migrations themselves and empty the tables before each test, so Postgres
